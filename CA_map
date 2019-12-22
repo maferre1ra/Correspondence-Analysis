@@ -1,0 +1,248 @@
+---
+title: "Correspondence Analysis"
+author: "Author: Mauricio Ferreira"
+runtime: shiny
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: rows
+    social: menu
+    source_code: embed
+---
+
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+```
+
+
+
+
+```{r global, include=FALSE}
+# load data in 'global' chunk so it can be shared by all users of the dashboard
+library(car)
+library(parallel)
+library(DT)
+library(lmf)
+library(matrixcalc)
+library(dplyr)
+library(ca)
+
+
+
+
+
+
+```
+
+Inputs {.sidebar}
+-----------------------------------------------------------------------
+
+<p>  </p>
+
+<b>_Intro_</b>
+
+With this dashboard, you can upload your own data and get a correspondence analysis map (e.g., attributes and brands).
+
+<p> </p>
+
+
+<p> <b>_Correct File Format_</b> </p>
+Make sure the input file is a csv file. 
+
+```{r}
+
+fileInput("file1", "start here - Choose CSV File",
+                multiple = TRUE,
+                accept = c("text/csv",
+                         "text/comma-separated-values,text/plain",
+                         ".csv"))
+
+```
+
+
+#Click this <b><i>Download</i></b> button to get the <u> derived importance index </u> 
+
+```{r}
+# Download Button
+
+downloadButton("MapDownload", label = "CA map Download")
+downloadHandler(
+  filename = function(){"CAmap_Download.csv"},
+  content = function(file){
+    write.csv(Dweights_run(), file)
+  }
+)
+
+```
+
+
+
+-----------------------------------------------------------------------
+
+
+
+
+Row {.tabset .tabset-fade}
+-----------------------------------------------------------------------
+
+
+### Correspondence Analysis Defined
+
+
+<p> 
+<b>_What is a Correspondence Analysis?_</b>
+
+
+ </p>
+*** 
+   
+### Data for CA map
+
+```{r}
+# only display table for values in cluster 4
+  
+
+
+# DT_file <- reactive({
+#   data<- read.csv(input$file1$datapath, sep=",")
+#   # if (is.null(data)){
+#   #   return(NULL) 
+#   # }     
+# })
+
+
+
+DT::renderDataTable({
+  validate(
+      need(input$file1$datapath != "", "Please select a data set")
+    )
+  
+data<- (read.csv(input$file1$datapath, sep=","))
+data <- data[rowSums(is.na(data)) != ncol(data),]
+data <- data[rowSums(is.na(data)) != ncol(data)-1,]
+
+# if (is.null(data)) {
+#      return(NULL)
+#    }
+
+  #data <- head(mtcars, n = input$maxrows)
+  DT::datatable(data, options = list(
+    bPaginate = FALSE
+  ))
+})
+
+
+#renderTable(
+ # rawdata[which(res@RowxNumber[, num()]), which(res@NumberxCol[num(), ])]
+# data<-as.data.frame(read.csv(input$file1$datapath, sep=","))
+#
+```
+
+
+
+
+### CA Map Results
+
+```{r}
+
+Dweights_run <- reactive({
+   validate(
+      need(input$file1$datapath != "", "Please select a data set")
+    )
+  
+  
+  
+
+
+  
+csvdat<- (read.csv(input$file1$datapath, sep=","))                  # import CSV data
+csvdat <- csvdat[rowSums(is.na(csvdat)) != ncol(csvdat),]
+csvdat <- csvdat[rowSums(is.na(csvdat)) != ncol(csvdat)-1,]
+
+dat = as.matrix(csvdat[-1]); colnames(dat)                        # remove row names column
+rownames(dat) = csvdat[,1]; rownames(dat)                         # assign row names to map data matrix
+# Calculate Maximum and Expected/Observed Index Scores
+whichmax = function(x){which(x==max(x))}                          # define function to calculate max column for each row
+max_col = colnames(dat)[apply(dat,1,whichmax)]                    # determine max column attribute % for each row
+colmeans = matrix(apply(dat,2,mean))                              # column means
+rowmeans = matrix(apply(dat,1,mean))                              # row means
+totalmean = mean(dat)                                             # overal mean
+exp = (rowmeans %*% t(colmeans))/totalmean                        # expected value
+index = dat/exp*100                                               # expected/observed index scores
+
+  
+# Run and View CA Analysis
+fit = ca(dat)                                                     # fit CA model
+#print(fit)                                                        # basic results
+#summary(fit)                                                      # extended results
+#plot(fit)                                                         # symmetric map (both x and y coordinates)
+
+# Export Map Output for Excel (all rounded)
+fcnm = fit$colnames; fcnm
+frnm = fit$rownames; frnm
+fstdccoord = fit$colcoord[,1:2]; fstdccoord                       # column standardized coordinates
+fstdrcoord = fit$rowcoord[,1:2]; fstdrcoord                       # row standardized coordinates
+fccoord = summary(fit)$columns[,c(5,8)]/1000; fccoord             # column coordinates (rounded)
+frcoord = summary(fit)$rows[,c(5,8)]/1000; frcoord                # row coordinates (rounded)
+fccontr = summary(fit)$columns[,c(7,10)]/1000; fccontr            # column contributions (rounded)
+frcontr = summary(fit)$rows[,c(7,10)]/1000; frcontr               # row contributions (rounded)
+
+# Determine Axis-Loadings for Column Attributes (SUBJECTIVE GUIDELINES)
+fcloadx = fcloady = rep(0,length(fcnm))                           # calculate variable that indicates where column attributes load
+fcloadx[fccontr[,1] < 1/length(fcnm)] = ""                        # column attribute does not load on dim 1
+fcloadx[fccontr[,1] >= 0.8*(1/length(fcnm))] = "x"                # column attribute borderline loads on dim 1
+fcloadx[fccontr[,1] >= 1/length(fcnm)] = "X"                      # column attribute loads (contribution > 1/# attributes) on dim 1
+fcloady[fccontr[,2] < 1/length(fcnm)] = ""                        # column attribute does not load on dim 2
+fcloady[fccontr[,2] >= 0.8*(1/length(fcnm))] = "y"                # column attribute borderline loads on dim 2
+fcloady[fccontr[,2] >= 1/length(fcnm)] = "Y"                      # column attribute loads (contribution > 1/# attributes) on dim 2
+fcload = paste(fcloadx,fcloady,sep="")
+
+# Determine Axis-Loadings for Row Attributes (SUBJECTIVE GUIDELINES)
+frloadx = frloady = rep(0,length(frnm))                           # calculate variable that indicates where row attributes load
+frloadx[frcontr[,1] < 1/length(frnm)] = ""                        # row attribute does not load on dim 1
+frloadx[frcontr[,1] >= 0.8*(1/length(frnm))] = "x"                # row attribute borderline loads on dim 1
+frloadx[frcontr[,1] >= 1/length(frnm)] = "X"                      # row attribute loads (contribution > 1/# attributes) on dim 1
+frloady[frcontr[,2] < 1/length(frnm)] = ""                        # row attribute does not load on dim 2
+frloady[frcontr[,2] >= 0.8*(1/length(frnm))] = "y"                # row attribute borderline loads on dim 2
+frloady[frcontr[,2] >= 1/length(frnm)] = "Y"                      # row attribute loads (contribution > 1/# attributes) on dim 2
+frload = paste(frloadx,frloady,sep="")
+
+# Combine Row and Column Output for Export
+ftype = c(rep("Row",length(frnm)),rep("Column",length(fcnm)))     # Row or Column Attribute
+fnm = c(frnm, fcnm)                                               # Attribute Names (row and column)
+index_all = rbind(index,matrix("",length(fcnm),length(fcnm)))     # Expected/Observed Index + blank rows for column variables
+max_all = c(max_col,rep("",length(fcnm)))                         # Column Maximum + blanks for column variables
+fstdcoord = rbind(fstdrcoord, fstdccoord)                         # Standardized Coordinates (will plot the same as actual, just on different scale)
+fcoord = rbind(frcoord, fccoord)                                  # Actual Coordinates (Rounded to 3 decimals, will exclude this from R Output)
+fcontr = rbind(frcontr, fccontr)                                  # Contributions (Rounded to 3 decimals)
+fload = c(frload, fcload)                                         # Axis-Loading Indicators
+
+# Final Output Table
+ftab = cbind(ftype,fnm,fstdcoord,fcontr,fload,max_all,index_all)  # combine all metrics for output
+#names(ftab) = c('Row-Column','Attribute','Dim1CoordStd','Dim2CoordStd','Dim1Contr','Dim2Contr','LoadAxis','Maximum #Column',paste(fcnm,'Index'))
+#write.csv(ftab,'Example OWN Map R Output.csv', row.names=F)
+})
+
+DT::renderDataTable({
+
+DT::datatable(Dweights_run(), options = list(
+  bPaginate = FALSE, autoWidth = TRUE, columnDefs = list(list(className = 'dt-center', targets = 0:4)))) %>% 
+  formatRound( c(1:length(Dweights_run())), 2) 
+
+})
+
+
+downloadButton("MapDownload", label = "CA map Download")
+downloadHandler(
+  filename = function(){"CAmap_Download.csv"},
+  content = function(file){
+    write.csv(Dweights_run(), file)
+  }
+)
+```
+
+
+
+
+
+
